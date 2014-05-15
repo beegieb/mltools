@@ -121,3 +121,113 @@ class LinearMAE(BaseDescentModel):
                               callback=self._callback(cX,cy))
         self.coef_ = np.reshape(coef, self._coef_shape)
         return self
+
+def weighted_mae(h, y):
+    w = y[:,0]
+    return (w * np.abs(h - y[:,1])).sum() / w.sum()
+
+def cost_wmae(coef, X, y, l2=0):
+    """
+    Parameters:
+      coef - the weights of the linear model must have size (n + 1)*o
+      X - data array for the linear model. Has shape (m,n)
+      y - output target array for the linear model. Has shape (m,o)
+      l2 - magnitude of the l2 penalty
+    """
+    pred = coef[0] + X.dot(coef[1:])
+    cost = weighted_mae(pred, y)
+    return cost
+   
+def grad_wmae(coef, X, y, l2=0):
+    """
+    Compute the gradient of a linear model with RMSLE:
+   
+    Parameters:
+      coef - the weights of the linear model must have size (n + 1)*o
+      X - data array for the linear model. Has shape (m,n)
+      y - output target array for the linear model. Has shape (m,o)
+      l2 - magnitude of the l2 penalty
+    """
+    pred = coef[0] + X.dot(coef[1:])
+    err = pred - y[:,1]
+    w = y[:,0]
+    ws = w.sum()
+    derr = w * np.sign(err)
+    dcoef = np.zeros(len(coef))
+    dcoef[1:] = derr * X / ws
+    dcoef[0] = derr.sum() / ws
+    return dcoef.flatten()
+    
+class WeightedLinearMAE(BaseDescentModel):
+    parameters_ = ['l2'] + BaseDescentModel.parameters_
+    def __init__(self, l2=0.0, **args):
+        """
+       Parameters:
+         l1 - magnitude of l1 penalty (default 0.0)
+         l2 - magnitude of l2 penalty (default 0.0)
+         args - arguments to pass to the optimization routine
+                see BaseDescentModel help
+       """
+        BaseDescentModel.__init__(self, **args)
+        self.l2 = l2
+   
+    def _make_coef(self, X, y, coef=None):
+        m, n = X.shape
+        if coef is None:
+            coef = np.zeros((n+1,))
+        elif coef.shape != (n+1,):
+            raise Error('coef must be None or be shape %s' % (str((n+1,))))
+        self._coef_shape = coef.shape
+        return coef
+       
+    def score(self, X, y):
+        """
+       Compute the RMSLE of the linear model prediction on X against y
+       
+       Must only be run after calling fit
+       
+       Parameters:
+         X - data array for the linear model. Has shape (m,n)
+         y - output target array for the linear model. Has shape (m,o)
+       """
+        pred = self.predict(X)
+        return weighted_mae(pred, y)
+   
+    def predict(self, X):
+        """
+        Compute the linear model prediction on X
+       
+        Must only be run after calling fit
+       
+        Parameters:
+          X - data array for the linear model. Has shape (m,n)
+        """
+        m, n = X.shape
+        coef = self.coef_
+        pred = coef[0] + X.dot(coef[1:])
+        return pred
+   
+    def fit(self, X, y, coef=None):
+        """
+       Fit the linear model using gradient decent methods
+       
+       Parameters:
+         X - data array for the linear model. Has shape (m,n)
+         y - output target array for the linear model. Has shape (m,o)
+         coef - None or array of size (n+1) * o
+       
+       Sets attributes:
+         coef_ - the weights of the linear model
+       """
+        coef = self._make_coef(X, y, coef)
+        cX, cy = (X, y) if self.callback_data is None else self.callback_data
+        coef = self._optimize(f=cost_wmae,
+                              x0=coef.flatten(),
+                              fprime=grad_wmae,
+                              args=(X, y, self.l2),
+                              gtol=self.tol,
+                              maxiter=self.maxiter,
+                              disp=0,
+                              callback=self._callback(cX,cy))
+        self.coef_ = np.reshape(coef, self._coef_shape)
+        return self
